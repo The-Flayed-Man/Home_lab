@@ -1,0 +1,839 @@
+#!/bin/bash
+
+# Function to display the menu
+display_menu() {
+    echo "======================================"
+    echo "   Multi Application Install script   "
+    echo "======================================"
+    echo "Please choose an Application to install:"
+    echo "1) Install and Configure Jenkins"
+    echo "2) Install and Configure Jenkins Agent"
+    echo "3) Install and Configure Grafana"
+    echo "4) Install and Configure Prometheus and Node Exporter"
+    echo "5) Install and Configure Fail2Ban"
+    echo "6) Install and Configure Docker"
+    echo "7) Install and Configure Kubernetes"
+    echo "8) Install and Configure Splunk Master"
+    echo "9) Install and Configure LXC Container"
+    echo "10) Install and Configure LAMP Stack"
+    echo "11) Install and Configure ELK Stack"
+    echo "12) Exit"
+    echo "=========================="
+}
+# Function to check the status of the last command
+check_success() {
+    if [ $? -ne 0 ]; then
+        echo "❌ Error: $1 failed."
+        exit 1
+    else
+        echo "✅ Success: $1 completed."
+    fi
+}
+# Jenkins setup script
+install_jenkins() {
+    echo "Starting Jenkins installation..."
+    # Jenkins installation code
+
+    # Create Jenkins user if it doesn't exist
+    if id "jenkins" &>/dev/null; then
+        echo "Jenkins user already exists."
+    else
+        echo "Creating Jenkins user..."
+        useradd jenkins
+        check_success "Failed to create Jenkins user."
+    fi
+
+    # Check and Install Java (OpenJDK 11)
+    if type -p java; then
+        echo "Java is already installed."
+    else
+        echo "Installing Java..."
+        dnf install -y -q java-21-openjdk
+        check_success "Failed to install Java."
+    fi
+
+    # Check and Add Jenkins Repository
+    if [ ! -f /etc/yum.repos.d/jenkins.repo ]; then
+        echo "Adding Jenkins Repository..."
+        curl --silent --location http://pkg.jenkins-ci.org/redhat-stable/jenkins.repo | tee /etc/yum.repos.d/jenkins.repo
+        check_success "Failed to add Jenkins repository."
+        echo "Importing Jenkins key..."
+        rpm --import https://pkg.jenkins.io/redhat-stable/jenkins.io.key
+        check_success "Failed to import Jenkins key."
+    else
+        echo "Jenkins repository is already added."
+    fi
+
+    # Check and Install Jenkins
+    if ! dnf list installed jenkins &>/dev/null; then
+        echo "Installing Jenkins..."
+        dnf install -y -q --nogpgcheck jenkins
+        check_success "Failed to install Jenkins."
+    else
+        echo "Jenkins is already installed."
+    fi
+
+    # Start and Enable Jenkins Service
+    echo "Starting Jenkins..."
+    systemctl start jenkins
+    check_success "Failed to start Jenkins service."
+    echo "Jenkins service started successfully."
+    systemctl enable jenkins
+    check_success "Failed to enable Jenkins service."
+    echo "Jenkins service enabled to start on boot successfully."
+
+    # Generate SSH Key for Jenkins User
+    echo "Generating SSH key for Jenkins user..."
+    sudo -u jenkins mkdir -p /var/lib/jenkins/.ssh
+    sudo -u jenkins chmod 700 /var/lib/jenkins/.ssh
+    if [ ! -f /var/lib/jenkins/.ssh/id_rsa ]; then
+        sudo -u jenkins ssh-keygen -t rsa -b 4096 -N "" -f /var/lib/jenkins/.ssh/id_rsa
+        check_success "Failed to generate SSH key for Jenkins user."
+    else
+        echo "SSH key for Jenkins user already exists."
+    fi
+
+    IP_ADDRESS=$(hostname -I | awk '{print $1}')
+    echo "Jenkins Installation Complete."
+    echo "Access Jenkins at http://$IP_ADDRESS:8080"
+
+    if [ -f /var/lib/jenkins/secrets/initialAdminPassword ]; then
+        echo "Initial Admin Password for Jenkins:"
+        cat /var/lib/jenkins/secrets/initialAdminPassword
+    else
+        echo "Initial Admin Password not found. You may need to check the Jenkins installation."
+    fi
+}
+
+# Grafana setup script
+install_grafana() {
+    echo "Starting Grafana installation..."
+    # Grafana installation code
+    repo_file="/etc/yum.repos.d/grafana.repo"
+
+    if [ ! -f "$repo_file" ]; then
+        sudo tee "$repo_file" << EOF
+[grafana]
+name=grafana
+baseurl=https://packages.grafana.com/oss/rpm
+repo_gpgcheck=1
+enabled=1
+gpgcheck=1
+gpgkey=https://packages.grafana.com/gpg.key
+sslverify=1
+sslcacert=/etc/pki/tls/certs/ca-bundle.crt
+EOF
+    else
+        echo "Grafana repository already added."
+    fi
+
+    if ! rpm -q grafana >/dev/null; then
+        dnf install -y grafana
+    else
+        echo "Grafana is already installed."
+    fi
+
+    systemctl start grafana-server
+    systemctl enable grafana-server
+    systemctl status grafana-server
+
+    if ! sudo firewall-cmd --list-ports | grep -q "3000/tcp"; then
+        sudo firewall-cmd --add-port=3000/tcp --permanent
+        sudo firewall-cmd --reload
+    else
+        echo "Port 3000 is already open."
+    fi
+
+    echo "Default login credentials:"
+    echo "Username: admin"
+    echo "Password: admin"
+
+    ipaddress=$(hostname -I | cut -d' ' -f1)
+    echo "Access Grafana at http://$ipaddress:3000/"
+}
+# Prometheus setup script
+install_prometheus() {
+# Script log file
+LOG_FILE="/var/log/prometheus_installation.log"
+
+# Function to log messages
+log_message() {
+    echo "$(date): $1" | tee -a $LOG_FILE
+}
+
+log_message "Starting Prometheus and Node Exporter installation script."
+
+# Version Parameterization
+# Function to fetch latest version from GitHub
+fetch_latest_release_version() {
+    curl -s "https://api.github.com/repos/prometheus/$1/releases/latest" | \
+    grep '"tag_name":' | \
+    sed -E 's/.*"([^"]+)".*/\1/' | \
+    sed -E 's/^v//'
+}
+
+# Fetching latest versions
+log_message "Fetching latest versions..."
+PROMETHEUS_VERSION=$(fetch_latest_release_version prometheus)
+NODE_EXPORTER_VERSION=$(fetch_latest_release_version node_exporter)
+
+if [ -z "$PROMETHEUS_VERSION" ] || [ -z "$NODE_EXPORTER_VERSION" ]; then
+    log_message "Error fetching versions. Exiting."
+    exit 1
+fi
+
+log_message "Latest Prometheus version: $PROMETHEUS_VERSION"
+log_message "Latest Node Exporter version: $NODE_EXPORTER_VERSION"
+
+# Updating the system
+log_message "Updating the system..."
+dnf update -y >>$LOG_FILE 2>&1 || { log_message "Failed to update the system. Exiting."; exit 1; }
+
+# Checking if the Prometheus user exists
+log_message "Checking for Prometheus user..."
+if id "prometheus" &>/dev/null; then
+    log_message "Prometheus user already exists."
+else
+    log_message "Creating Prometheus user..."
+    useradd --no-create-home --shell /bin/false prometheus || { log_message "Failed to create Prometheus user. Exiting."; exit 1; }
+fi
+
+# Checking and creating necessary directories
+log_message "Checking and creating necessary directories..."
+for dir in /etc/prometheus /var/lib/prometheus; do
+    if [ -d "$dir" ]; then
+        log_message "$dir already exists."
+    else
+        mkdir "$dir" && chown prometheus:prometheus "$dir" || { log_message "Failed to create $dir. Exiting."; exit 1; }
+    fi
+done
+
+# Check if Prometheus binaries are already present
+log_message "Checking for Prometheus binaries..."
+if [ -f "/usr/local/bin/prometheus" ] && [ -f "/usr/local/bin/promtool" ]; then
+    log_message "Prometheus binaries already exist."
+else
+    log_message "Downloading and installing Prometheus..."
+    cd /tmp && \
+    curl -LO https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz && \
+    tar xvf prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz && \
+    cp prometheus-${PROMETHEUS_VERSION}.linux-amd64/prometheus /usr/local/bin/ && \
+    cp prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool /usr/local/bin/ && \
+    chown prometheus:prometheus /usr/local/bin/prometheus && \
+    chown prometheus:prometheus /usr/local/bin/promtool || { log_message "Failed to install Prometheus. Exiting."; exit 1; }
+fi
+
+# Check for Prometheus configuration files
+log_message "Checking for Prometheus configuration files..."
+if [ -d "prometheus-${PROMETHEUS_VERSION}.linux-amd64/consoles" ]; then
+    cp -r prometheus-${PROMETHEUS_VERSION}.linux-amd64/consoles /etc/prometheus
+    log_message "Consoles directory copied."
+else
+    log_message "Consoles directory not found. Skipping."
+fi
+
+if [ -d "prometheus-${PROMETHEUS_VERSION}.linux-amd64/console_libraries" ]; then
+    cp -r prometheus-${PROMETHEUS_VERSION}.linux-amd64/console_libraries /etc/prometheus
+    log_message "Console libraries directory copied."
+else
+    log_message "Console libraries directory not found. Skipping."
+fi
+
+if [ -f "prometheus-${PROMETHEUS_VERSION}.linux-amd64/prometheus.yml" ]; then
+    cp prometheus-${PROMETHEUS_VERSION}.linux-amd64/prometheus.yml /etc/prometheus
+    log_message "Default prometheus.yml copied."
+else
+    log_message "prometheus.yml not found. Creating a default configuration..."
+    cat <<EOF > /etc/prometheus/prometheus.yml
+global:
+  scrape_interval: 15s
+
+scrape_configs:
+  - job_name: "prometheus"
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  - job_name: "node_exporter"
+    static_configs:
+      - targets: ["localhost:9100"]
+EOF
+fi
+chown -R prometheus:prometheus /etc/prometheus
+
+# Setting up Prometheus systemd service
+log_message "Setting up Prometheus systemd service..."
+if [ -f "/etc/systemd/system/prometheus.service" ]; then
+    log_message "Prometheus systemd service file already exists."
+else
+    echo "[Unit]
+Description=Prometheus
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=prometheus
+Group=prometheus
+Type=simple
+ExecStart=/usr/local/bin/prometheus \\
+  --config.file /etc/prometheus/prometheus.yml \\
+  --storage.tsdb.path /var/lib/prometheus/ \\
+  --web.console.templates=/etc/prometheus/consoles \\
+  --web.console.libraries=/etc/prometheus/console_libraries
+
+[Install]
+WantedBy=multi-user.target" | tee /etc/systemd/system/prometheus.service
+fi
+
+systemctl daemon-reload
+systemctl start prometheus
+systemctl enable prometheus
+log_message "Prometheus installation and configuration complete."
+
+# Node Exporter installation
+log_message "Starting Node Exporter installation..."
+if [ -f "/usr/local/bin/node_exporter" ]; then
+    log_message "Node Exporter binary already exists."
+else
+    log_message "Downloading and installing Node Exporter..."
+    cd /tmp && \
+    curl -LO https://github.com/prometheus/node_exporter/releases/download/v${NODE_EXPORTER_VERSION}/node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64.tar.gz && \
+    tar xvf node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64.tar.gz && \
+    cp node_exporter-${NODE_EXPORTER_VERSION}.linux-amd64/node_exporter /usr/local/bin/ && \
+    chown prometheus:prometheus /usr/local/bin/node_exporter || { log_message "Failed to install Node Exporter. Exiting."; exit 1; }
+fi
+
+log_message "Setting up Node Exporter systemd service..."
+if [ -f "/etc/systemd/system/node_exporter.service" ]; then
+    log_message "Node Exporter systemd service file already exists."
+else
+    echo "[Unit]
+Description=Node Exporter
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+User=prometheus
+Group=prometheus
+Type=simple
+ExecStart=/usr/local/bin/node_exporter
+
+[Install]
+WantedBy=multi-user.target" | tee /etc/systemd/system/node_exporter.service
+fi
+
+systemctl daemon-reload
+systemctl start node_exporter
+systemctl enable node_exporter
+log_message "Node Exporter installation and configuration complete."
+
+# Display Prometheus dashboard URL
+ipaddress=$(hostname -I | cut -d' ' -f1)
+echo "Prometheus dashboard URL: http://$ipaddress:9090/"
+}
+
+# Docker setup script
+install_docker() {
+    echo "Starting Docker installation..."
+
+    # Step 1: Install 'dnf-utils'
+    echo "Installing dnf-utils..."
+    sudo dnf install -y dnf-utils
+    check_success "Installing dnf-utils"
+
+    # Step 2: Add the Docker repository
+    echo "Adding the Docker repository..."
+    sudo dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+    check_success "Adding Docker repository"
+
+    # Step 3: Verify repositories
+    echo "Listing available repositories..."
+    sudo dnf repolist
+    check_success "Listing repositories"
+
+    # Step 4: Install Docker packages
+    echo "Installing Docker CE, CLI, Containerd, Buildx, and Compose plugins..."
+    sudo dnf install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+    check_success "Installing Docker packages"
+
+    # Step 5: Start Docker service
+    echo "Starting Docker service..."
+    sudo systemctl start docker
+    check_success "Starting Docker service"
+
+    # Step 6: Enable Docker on boot
+    echo "Enabling Docker to start on boot..."
+    sudo systemctl enable docker
+    check_success "Enabling Docker service"
+
+    # Step 7: Verify Docker status
+    echo "Checking Docker status..."
+    sudo systemctl status docker --no-pager
+    check_success "Checking Docker status"
+
+    echo "🎉 Docker installation completed successfully! Use 'docker --version' to verify."
+}
+#Install Kubernetes
+install_kubernetes() {
+# Kubernetes Cluster Setup Script for AlmaLinux
+# NOTE: Run this script as root or with sudo privileges.
+
+set -e  # Exit immediately if a command exits with a non-zero status.
+
+### Step 1: Set Hostnames and Update System ###
+echo "[INFO] Updating system packages..."
+dnf update -y
+
+# Set hostname for master or worker node
+read -p "Enter the desired hostname for this node (e.g., master or worker-1): " NODE_HOSTNAME
+hostnamectl set-hostname "$NODE_HOSTNAME"
+echo "[INFO] Hostname set to $NODE_HOSTNAME."
+
+### Step 2: Disable SELinux and Firewall ###
+echo "[INFO] Disabling SELinux..."
+if [[ $(getenforce) != "Disabled" ]]; then
+    setenforce 0
+fi
+sed -i --follow-symlinks 's/SELINUX=enforcing/SELINUX=disabled/' /etc/selinux/config
+echo "[INFO] Stopping and disabling the firewall..."
+systemctl disable --now firewalld
+
+### Step 3: Enable Kernel Modules for Kubernetes ###
+echo "[INFO] Loading required kernel modules..."
+modprobe overlay
+modprobe br_netfilter
+
+# Configure sysctl for Kubernetes networking
+echo "[INFO] Configuring sysctl settings for Kubernetes..."
+cat <<EOF | tee /etc/sysctl.d/k8s.conf
+net.bridge.bridge-nf-call-ip6tables = 1
+net.bridge.bridge-nf-call-iptables = 1
+net.ipv4.ip_forward = 1
+EOF
+
+sysctl --system
+
+### Step 4: Install Container Runtime (containerd) ###
+echo "[INFO] Adding Docker repository for containerd..."
+dnf config-manager --add-repo https://download.docker.com/linux/centos/docker-ce.repo
+
+echo "[INFO] Installing container runtime (containerd)..."
+dnf install -y containerd.io
+
+echo "[INFO] Configuring containerd..."
+mkdir -p /etc/containerd
+containerd config default > /etc/containerd/config.toml
+sed -i 's/SystemdCgroup = false/SystemdCgroup = true/' /etc/containerd/config.toml
+systemctl restart containerd
+systemctl enable containerd
+
+### Step 5: Add Kubernetes Repository and Install Tools ###
+echo "[INFO] Adding Kubernetes repository..."
+cat <<EOF | tee /etc/yum.repos.d/kubernetes.repo
+[kubernetes]
+name=Kubernetes
+baseurl=https://pkgs.k8s.io/core:/stable:/v1.29/rpm/
+enabled=1
+gpgcheck=1
+repo_gpgcheck=1
+gpgkey=https://pkgs.k8s.io/core:/stable:/v1.29/rpm/repodata/repomd.xml.key
+EOF
+echo "[INFO] Installing kubeadm, kubelet, and kubectl..."
+dnf install -y kubelet kubeadm kubectl --disableexcludes=kubernetes
+systemctl enable kubelet
+
+### Step 6: Initialize Kubernetes Cluster (Master Node Only) ###
+read -p "Is this the master node? (y/n): " IS_MASTER
+
+if [[ "$IS_MASTER" == "y" ]]; then
+    echo "[INFO] Initializing Kubernetes cluster..."
+    kubeadm init --pod-network-cidr=10.244.0.0/16
+
+    echo "[INFO] Setting up kubeconfig for the root user..."
+    mkdir -p $HOME/.kube
+    cp -i /etc/kubernetes/admin.conf $HOME/.kube/config
+    chown $(id -u):$(id -g) $HOME/.kube/config
+
+    echo "[INFO] Deploying a pod network (Flannel)..."
+    kubectl apply -f https://raw.githubusercontent.com/coreos/flannel/master/Documentation/kube-flannel.yml
+
+    echo "[INFO] Kubernetes cluster initialized successfully."
+    echo "To add worker nodes, use the following command on each worker:"
+    kubeadm token create --print-join-command
+fi
+
+### Step 7: Configure Worker Node (if not Master) ###
+if [[ "$IS_MASTER" != "y" ]]; then
+    echo "[INFO] This script doesn't join a worker node automatically."
+    echo "Please run the 'kubeadm join' command provided by the master node."
+fi
+
+echo "[INFO] Kubernetes setup completed successfully!"
+}
+#Install Splunk master
+install_splunk(){
+    #!/bin/bash
+
+# Variables
+SPLUNK_VERSION="9.3.0"
+SPLUNK_BUILD="51ccf43db5bd"
+SPLUNK_PACKAGE="splunk-${SPLUNK_VERSION}-${SPLUNK_BUILD}.x86_64.rpm"
+SPLUNK_URL="https://download.splunk.com/products/splunk/releases/${SPLUNK_VERSION}/linux/${SPLUNK_PACKAGE}"
+
+# Update the system
+echo "Updating the system..."
+sudo dnf update -y
+
+# Download Splunk package
+echo "Downloading Splunk package..."
+wget -O ${SPLUNK_PACKAGE} "${SPLUNK_URL}"
+
+# Install Splunk package
+echo "Installing Splunk..."
+sudo dnf install -y ${SPLUNK_PACKAGE}
+
+# Enable Splunk to start at boot
+echo "Enabling Splunk service to start on boot..."
+sudo /opt/splunk/bin/splunk enable boot-start --accept-license --answer-yes
+
+# Start Splunk
+echo "Starting Splunk..."
+sudo /opt/splunk/bin/splunk start --accept-license --no-prompt
+
+echo "Splunk installation completed successfully!"
+}
+#Install jenkins_agent_install
+install_jenkins_agent_setup(){
+# Variables
+JENKINS_USER="jenkins"
+JAVA_PACKAGE="java-21-openjdk"
+
+# Functions
+install_packages() {
+    echo "Installing required packages..."
+    sudo dnf install -y $JAVA_PACKAGE
+}
+
+create_user() {
+    echo "Creating Jenkins user..."
+    if id "$JENKINS_USER" &>/dev/null; then
+        echo "User '$JENKINS_USER' already exists."
+    else
+        sudo useradd -m -s /bin/bash $JENKINS_USER
+        echo "Set a password for the Jenkins user:"
+        sudo passwd $JENKINS_USER
+    fi
+}
+
+setup_ssh_access() {
+    echo "Setting up passwordless SSH access for Jenkins user..."
+    sudo -u $JENKINS_USER mkdir -p /home/$JENKINS_USER/.ssh
+    sudo chmod 700 /home/$JENKINS_USER/.ssh
+
+    echo "Paste the Jenkins master's public SSH key:"
+    read -r SSH_KEY
+    echo "$SSH_KEY" | sudo tee -a /home/$JENKINS_USER/.ssh/authorized_keys > /dev/null
+    sudo chmod 600 /home/$JENKINS_USER/.ssh/authorized_keys
+    sudo chown -R $JENKINS_USER:$JENKINS_USER /home/$JENKINS_USER/.ssh
+}
+#LXC container_install
+LXC_container_setup(){
+#!/bin/bash
+
+# Function to check if the script is run as root
+check_root() {
+    if [ "$EUID" -ne 0 ]; then
+        echo "Please run this script as root."
+        exit 1
+    fi
+}
+
+# Check for root permissions
+check_root
+
+# Path to the dnf configuration file
+DNF_CONF="/etc/dnf/dnf.conf"
+
+# Function to add a configuration if it doesn't already exist
+add_config_if_not_exists() {
+    local config="$1"
+    local file="$2"
+    if grep -q "^${config}" "$file"; then
+        echo "${config} already exists in ${file}"
+    else
+        echo "$config" >> "$file"
+        echo "Added ${config} to ${file}"
+    fi
+}
+
+# Check and add configurations
+add_config_if_not_exists "fastestmirror=True" "$DNF_CONF"
+add_config_if_not_exists "max_parallel_downloads=10" "$DNF_CONF"
+
+# Prompt the user to enter a new hostname
+read -p "Enter the new hostname: " NEW_HOSTNAME
+if ! hostnamectl set-hostname "$NEW_HOSTNAME"; then
+    echo "Failed to set the hostname. Exiting."
+    exit 1
+fi
+echo "Hostname changed to $NEW_HOSTNAME."
+
+# Install required packages
+echo "Installing required packages..."
+if ! dnf install -y wget git curl tar net-tools epel-release ssh-key-dir openssh; then
+    echo "Failed to install required packages. Exiting."
+    exit 1
+fi
+
+# Prompt for username
+read -p "Enter the username for SSH setup: " USERNAME
+
+# Set up passwordless SSH
+SSH_DIR="/home/$USERNAME/.ssh"
+AUTHORIZED_KEYS="$SSH_DIR/authorized_keys"
+mkdir -p "$SSH_DIR"
+chmod 700 "$SSH_DIR"
+
+# Generate an SSH key pair if none exists
+if [ ! -f "$SSH_DIR/id_rsa" ]; then
+    echo "Generating SSH key pair for $USERNAME..."
+    sudo -u "$USERNAME" ssh-keygen -t rsa -b 2048 -f "$SSH_DIR/id_rsa" -q -N ''
+    echo "SSH key pair generated."
+fi
+
+# Add the public key to authorized_keys
+cat "$SSH_DIR/id_rsa.pub" > "$AUTHORIZED_KEYS"
+chmod 600 "$AUTHORIZED_KEYS"
+chown -R "$USERNAME:$USERNAME" "$SSH_DIR"
+echo "Passwordless SSH configured for $USERNAME."
+
+# Enable and start SSH service
+echo "Enabling and starting SSH service..."
+systemctl enable sshd
+systemctl start sshd
+echo "SSH service is enabled and started."
+
+# Allow root login via SSH (optional)
+read -p "Do you want to enable root login via SSH? (y/N): " ENABLE_ROOT_SSH
+if [[ "$ENABLE_ROOT_SSH" =~ ^[Yy]$ ]]; then
+    sed -i 's/^#\?PermitRootLogin .*/PermitRootLogin yes/' /etc/ssh/sshd_config
+    systemctl restart sshd
+    echo "Root login via SSH has been enabled."
+else
+    echo "Root login via SSH has not been enabled."
+fi
+
+echo "Setup is complete. You can now use passwordless SSH for $USERNAME on this system."
+
+}
+# Main
+echo "Starting Jenkins Agent Setup..."
+install_packages
+create_user
+setup_ssh_access
+echo "Jenkins Agent Setup Complete!"
+}    
+#LAMP stack install
+LAMP_stack_install(){
+#!/bin/bash
+
+# Exit on error
+set -e
+
+# Update System Packages
+echo "Updating system packages..."
+sudo dnf check-update
+
+# Install Apache (HTTP Server)
+echo "Installing Apache..."
+sudo dnf install httpd -y
+
+# Start and Enable Apache
+echo "Starting and enabling Apache..."
+sudo systemctl start httpd
+sudo systemctl enable httpd
+
+# Allow HTTP and HTTPS Through the Firewall
+echo "Configuring firewall for Apache..."
+sudo firewall-cmd --permanent --add-service=http
+sudo firewall-cmd --permanent --add-service=https
+sudo firewall-cmd --reload
+
+# Install MariaDB (MySQL)
+echo "Installing MariaDB..."
+sudo dnf install mariadb-server mariadb -y
+
+# Start and Enable MariaDB
+echo "Starting and enabling MariaDB..."
+sudo systemctl start mariadb
+sudo systemctl enable mariadb
+
+# Secure MariaDB Installation
+echo "Securing MariaDB..."
+sudo mysql_secure_installation <<EOF
+
+Y
+password
+password
+Y
+Y
+Y
+Y
+EOF
+
+# Install PHP
+echo "Installing PHP..."
+sudo dnf install php php-mysqlnd php-cli php-common php-opcache php-gd php-curl php-mbstring php-xml php-bcmath php-json -y
+
+# Restart Apache
+echo "Restarting Apache to apply PHP configuration..."
+sudo systemctl restart httpd
+
+# Test PHP
+echo "Creating a PHP test file..."
+echo "<?php phpinfo(); ?>" | sudo tee /var/www/html/info.php > /dev/null
+
+# Display Completion Message
+echo "LAMP stack installation is complete!"
+echo "You can verify PHP installation by visiting: http://your-server-ip/info.php"
+echo "Don't forget to replace 'your-server-ip' with your actual server's IP address."
+}
+#Install ELK Stack
+install_elk_stack(){
+#!/bin/bash
+
+# Exit on error
+set -e
+
+# Update system
+echo "Updating system..."
+sudo dnf update -y
+
+# Install Java
+echo "Installing Java..."
+sudo dnf install -y java-21-openjdk
+
+# Verify Java installation
+java -version
+
+# Add Elasticsearch GPG key and repository
+echo "Adding Elasticsearch repository..."
+sudo rpm --import https://artifacts.elastic.co/GPG-KEY-elasticsearch
+cat <<EOF | sudo tee /etc/yum.repos.d/elasticsearch.repo
+[elasticsearch]
+name=Elasticsearch repository
+baseurl=https://artifacts.elastic.co/packages/8.x/yum
+gpgcheck=1
+gpgkey=https://artifacts.elastic.co/GPG-KEY-elasticsearch
+enabled=1
+autorefresh=1
+type=rpm-md
+sslverify=0
+EOF
+
+# Install Elasticsearch
+echo "Installing Elasticsearch..."
+sudo dnf install -y elasticsearch
+
+# Enable and start Elasticsearch service
+echo "Enabling and starting Elasticsearch..."
+sudo systemctl enable elasticsearch
+sudo systemctl start elasticsearch
+
+# Verify Elasticsearch is running
+curl -X GET "http://localhost:9200" || echo "Elasticsearch not reachable yet. Proceeding..."
+
+# Install Logstash
+echo "Installing Logstash..."
+sudo dnf install -y logstash
+
+# Enable and start Logstash service
+echo "Enabling and starting Logstash..."
+sudo systemctl enable logstash
+sudo systemctl start logstash
+
+# Install Kibana
+echo "Installing Kibana..."
+sudo dnf install -y kibana || {
+  echo "Downloading Kibana manually due to repository issues..."
+  wget https://artifacts.elastic.co/downloads/kibana/kibana-8.17.0-x86_64.rpm
+  sudo rpm -ivh kibana-8.17.0-x86_64.rpm
+}
+
+# Enable and start Kibana service
+echo "Enabling and starting Kibana..."
+sudo systemctl enable kibana
+sudo systemctl start kibana
+
+# Configure Kibana for external access (optional)
+echo "Configuring Kibana for external access..."
+sudo sed -i 's/#server.host: "localhost"/server.host: "0.0.0.0"/' /etc/kibana/kibana.yml
+sudo systemctl restart kibana
+
+# Configure firewall
+echo "Configuring firewall..."
+#sudo firewall-cmd --permanent --add-port=9200/tcp # Elasticsearch
+#sudo firewall-cmd --permanent --add-port=5601/tcp # Kibana
+#sudo firewall-cmd --reload
+
+# Optional: Install Filebeat
+echo "Do you want to install Filebeat? (y/n)"
+read -r INSTALL_FILEBEAT
+if [ "$INSTALL_FILEBEAT" == "y" ]; then
+  echo "Installing Filebeat..."
+  sudo dnf install -y filebeat
+  echo "Enabling and starting Filebeat..."
+  sudo systemctl enable filebeat
+  sudo systemctl start filebeat
+fi
+
+# Done
+echo "ELK stack installation completed. Access Kibana at http://<server-ip>:5601."
+}
+
+# Main menu loop
+while true; do
+    display_menu
+    read -rp "Enter your choice: " choice
+    case $choice in
+        1)
+            install_jenkins
+            ;;
+        2)  
+            install_jenkins_agent_setup
+            ;;
+        3)
+            install_grafana
+            ;;
+        4)
+            install_prometheus
+            ;;
+        5)
+            install_fail2ban
+            ;;
+        6)
+            install_docker
+            ;;
+        7)
+            install_kubernetes
+            ;;
+        8)  
+            install_splunk
+            ;;
+        9)  
+            LXC_container_setup
+            ;;
+        10)
+            install_elk_stack
+            ;;
+        11)
+            LAMP_stack_install
+            ;;        
+        12)
+            echo "Exiting. Have a great day!"
+            exit 0
+            ;;
+        *)
+            echo "Invalid option. Please try again."
+            ;;
+    esac
+done
