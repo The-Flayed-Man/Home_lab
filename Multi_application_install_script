@@ -13,11 +13,12 @@ display_menu() {
     echo "5) Install and Configure Fail2Ban"
     echo "6) Install and Configure Docker"
     echo "7) Install and Configure Kubernetes"
-    echo "8) Install and Configure Splunk Master"
-    echo "9) Install and Configure LXC Container"
-    echo "10) Install and Configure LAMP Stack"
-    echo "11) Install and Configure ELK Stack"
-    echo "12) Exit"
+    echo "8) Install and Configure microk8s"
+    echo "9) Install and Configure Splunk Master"
+    echo "10) Install and Configure LXC Container"
+    echo "11) Install and Configure LAMP Stack"
+    echo "12) Install and Configure ELK Stack"
+    echo "13) Exit"
     echo "=========================="
 }
 # Function to check the status of the last command
@@ -789,7 +790,66 @@ fi
 # Done
 echo "ELK stack installation completed. Access Kibana at http://<server-ip>:5601."
 }
+#Install Microk8s on a single node
+ install_microk8s(){
+echo "Welcome to Microk8s Single Node install script!"
 
+run_command() {
+    echo "Running command: $1"
+    eval $1
+    if [ $? -ne 0 ]; then
+        echo "Error occurred while running: $1"
+        exit 1
+    fi
+}
+
+install_microk8s() {
+    run_command "snap install microk8s --classic"
+}
+
+enable_microk8s_addons() {
+    run_command "microk8s enable dashboard observability storage ingress dns host-access"
+}
+
+microk8s_get_nodes() {
+    run_command "microk8s kubectl get nodes"
+}
+
+microk8s_status() {
+    run_command "microk8s status --wait-ready"
+}
+
+start_microk8s_dashboard() {
+    run_command "nohup microk8s dashboard-proxy > /dev/null 2>&1 &"
+}
+
+get_microk8s_dashboard_token() {
+    run_command "microk8s kubectl create token default"
+}
+
+microk8s_config_for_lens() {
+    run_command "microk8s kubectl config view --minify --raw"
+}
+
+get_microk8s_services() {
+    run_command "microk8s kubectl get services"
+}
+
+get_microk8s_deployments() {
+    run_command "microk8s kubectl get deployments"
+}
+
+# Call the functions
+install_microk8s
+enable_microk8s_addons
+microk8s_status
+microk8s_get_nodes
+get_microk8s_services
+get_microk8s_deployments
+start_microk8s_dashboard
+get_microk8s_dashboard_token
+microk8s_config_for_lens
+}
 # Main menu loop
 while true; do
     display_menu
@@ -815,6 +875,9 @@ while true; do
             ;;
         7)
             install_kubernetes
+            ;;
+        8)  
+            install_microk8s
             ;;
         8)  
             install_splunk
