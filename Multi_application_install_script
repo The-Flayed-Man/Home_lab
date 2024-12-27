@@ -879,19 +879,19 @@ while true; do
         8)  
             install_microk8s
             ;;
-        8)  
+        9)  
             install_splunk
             ;;
-        9)  
+        10)  
             LXC_container_setup
             ;;
-        10)
+        11)
             install_elk_stack
             ;;
-        11)
+        12)
             LAMP_stack_install
             ;;        
-        12)
+        13)
             echo "Exiting. Have a great day!"
             exit 0
             ;;
