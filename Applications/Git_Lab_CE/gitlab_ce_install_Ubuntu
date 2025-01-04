@@ -1,0 +1,77 @@
+#!/usr/bin/python3
+
+#This script is to install Gitlab Community Edition for home use.
+#This script is made to install Gitlab-CE on Ubuntu based systems.
+#
+#
+
+import subprocess
+import socket
+
+def run_command(command):
+    """Runs a shell command."""
+    print(f"Running: {command}")
+    result = subprocess.run(command, shell=True, capture_output=True, text=True)
+    if result.returncode == 0:
+        print(result.stdout)
+    else:
+        print(f"Error: {result.stderr}")
+        raise Exception(f"Command failed: {command}")
+
+def get_server_ip():
+    """Retrieves the server's IP address."""
+    hostname = socket.gethostname()
+    ip_address = socket.gethostbyname(hostname)
+    return ip_address
+
+def install_packages():
+    """Installs packages needed for Gitlab-ce"""
+    run_command("sudo apt install -y curl wget ca-certificates openssh-server postfix tzdata perl >/dev/null")
+
+def update_system():
+    """Updates the system packages."""
+    run_command("sudo apt update > /dev/null && sudo apt upgrade -y > /dev/null")
+
+def git_package():
+    """Downloads the Git CE package"""
+    run_command("curl https://packages.gitlab.com/install/repositories/gitlab/gitlab-ce/script.deb.sh | sudo bash")
+
+def git_install():
+    """Installs Gitlab-ce"""
+    run_command("sudo apt-get install gitlab-ce")
+
+def gitlab_status2():
+    """Gets Gitlab-ce status"""
+    run_command("sudo gitlab-ctl status")
+
+def gitlab_config():
+    """Configures the Gitlab-ce configuration file"""
+    ip_address = get_server_ip()
+    run_command(f"sudo sed -i 's|^external_url.*|external_url \"https://{ip_address}\"|' /etc/gitlab/gitlab.rb")
+
+def gitlab_reconfigure():
+    """Reconfigures Gitlab-ce with new settings"""
+    run_command("sudo gitlab-ctl reconfigure")
+
+def gitlab_status():
+    """Gets Gitlab-ce status"""
+    run_command("sudo gitlab-ctl status")
+def gitlab_URL():
+    """Gets Gitlab-ce URL"""
+    ip_address = get_server_ip()
+    print(f'The Gitlab URL is: "https://{ip_address}"')
+
+
+if __name__ == "__main__":
+    try:
+        update_system()          # Update the system
+        install_packages()       # Install required packages
+        git_package()            # Download GitLab CE package
+        git_install()            # Install GitLab CE
+        gitlab_status2()
+        gitlab_config()          # Configure GitLab
+        gitlab_reconfigure()     # Reconfigure GitLab
+        gitlab_status()          # Check the status of GitLab
+        gitlab_URL()
+    except Exception as e:
+        print(f"An error occurred: {e}")

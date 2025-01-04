@@ -1,0 +1,57 @@
+#!/bin/bash
+
+# Check and add Grafana repository
+repo_file="/etc/apt/sources.list.d/grafana.list"
+if [ ! -f "$repo_file" ]; then
+    echo "deb https://packages.grafana.com/oss/deb stable main" | sudo tee "$repo_file"
+    sudo apt-get install -y software-properties-common
+    sudo apt-get update
+    sudo apt-get install -y apt-transport-https
+    sudo apt-get update
+    sudo wget -q -O - https://packages.grafana.com/gpg.key | sudo apt-key add -
+else
+    echo "Grafana repository already added."
+fi
+
+#install GPG Key
+curl -fsSL https://packages.grafana.com/gpg.key | sudo gpg --dearmor -o /usr/share/keyrings/grafana-archive-keyring.gpg
+
+#echo Grafana repository
+echo deb [signed-by=/usr/share/keyrings/grafana-archive-keyring.gpg] https://packages.grafana.com/oss/deb stable main > /etc/apt/sources.list.d/grafana.list
+
+# Check and install Grafana
+if ! dpkg -l | grep -q grafana; then
+    sudo apt-get update
+    sudo apt-get install -y grafana
+else
+    echo "Grafana is already installed."
+fi
+
+# Start and enable Grafana service
+if ! systemctl is-active --quiet grafana-server; then
+    sudo systemctl start grafana-server
+fi
+if ! systemctl is-enabled --quiet grafana-server; then
+    sudo systemctl enable grafana-server
+fi
+sudo systemctl status grafana-server
+
+# Configure the firewall
+if ! sudo ufw status | grep -q "3000/tcp"; then
+    sudo ufw allow 3000/tcp
+    sudo ufw reload
+else
+    echo "Port 3000 is already open."
+fi
+
+# Echo default login credentials
+echo "Default login credentials are:"
+echo "Username: admin"
+echo "Password: admin"
+
+# Echo Grafana config file location
+echo "Grafana config file /etc/grafana/grafana.ini"
+
+# Fetch and echo the server's IP address
+ipaddress=$(hostname -I | cut -d' ' -f1)
+echo "Grafana dashboard URL: http://$ipaddress:3000/"
