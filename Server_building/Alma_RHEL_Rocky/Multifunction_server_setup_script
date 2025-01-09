@@ -1,0 +1,80 @@
+#!/bin/bash
+
+# Function for Alias Maker
+alias_maker() {
+    echo "Alias Maker"
+    declare -a aliases
+
+    while true; do
+        read -p "Enter the alias name: " alias_name
+        read -p "Enter the command for the alias: " command
+        aliases+=("alias $alias_name='$command'")
+        read -p "Do you want to add another alias? (y/n): " add_more
+        if [[ $add_more != "y" ]]; then
+            break
+        fi
+    done
+
+    echo "You have added the following aliases:"
+    printf "%s\n" "${aliases[@]}"
+    read -p "Are you sure you want to add these to .bashrc? (y/n): " confirm
+    if [[ $confirm == "y" ]]; then
+        for alias in "${aliases[@]}"; do
+            echo "$alias" >> ~/.bashrc
+        done
+        source ~/.bashrc
+        echo "Aliases added and .bashrc reloaded."
+    else
+        echo "No aliases were added."
+    fi
+}
+
+# Function for DNF Configuration
+configure_dnf() {
+    DNF_CONF="/etc/dnf/dnf.conf"
+
+    add_config_if_not_exists() {
+        local config="$1"
+        if grep -q "^$config" "$DNF_CONF"; then
+            echo "$config already exists in $DNF_CONF"
+        else
+            echo "$config" >> "$DNF_CONF"
+            echo "Added $config to $DNF_CONF"
+        fi
+    }
+
+    echo "Configuring DNF..."
+
+    # Ensure required configurations are added
+    add_config_if_not_exists "fastestmirror=True"
+    add_config_if_not_exists "max_parallel_downloads=10"
+
+    echo "DNF configuration completed."
+}
+
+# Main menu
+while true; do
+    echo "Server Setup Scripts Menu"
+    echo "1. Alias Maker"
+    echo "2. IP Configure Script"
+    echo "3. Set Hostname"
+    echo "4. Configure Timezone"
+    echo "5. Secure Copy Files to a Server"
+    echo "6. Set Up Passwordless SSH"
+    echo "7. Configure DNF"
+    echo "8. Exit"
+    read -p "Choose an option: " choice
+
+    case $choice in
+        1) alias_maker ;;
+        2) ip_configure ;;
+        3) set_hostname ;;
+        4) set_timezone ;;
+        5) secure_copy ;;
+        6) setup_ssh_key ;;
+        7) configure_dnf ;;
+        8) echo "Exiting."; break ;;
+        *) echo "Invalid choice. Please try again." ;;
+    esac
+done
+
