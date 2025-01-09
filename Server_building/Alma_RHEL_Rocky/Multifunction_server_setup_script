@@ -29,6 +29,144 @@ alias_maker() {
     fi
 }
 
+# Function for IP Configuration
+ip_configure() {
+    echo "IP Configuration Script"
+
+    # Check if the script is run as root
+    if [[ $EUID -ne 0 ]]; then
+        echo "Please run this script as root."
+        return
+    fi
+
+    # Network interface configuration
+    read -p "Enter the network interface name (e.g., eth0, ens33): " interface
+    if ! ip link show "$interface" &>/dev/null; then
+        echo "Interface $interface does not exist."
+        return
+    fi
+
+    read -p "Enter the new IP address (e.g., 192.168.1.100/24): " new_ip
+    if ! [[ $new_ip =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]]; then
+        echo "Invalid IP address format."
+        return
+    fi
+
+    read -p "Enter the new gateway address (e.g., 192.168.1.1): " new_gateway
+    if ! [[ $new_gateway =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+        echo "Invalid gateway address format."
+        return
+    fi
+
+    config_file="/etc/sysconfig/network-scripts/ifcfg-$interface"
+    if [[ ! -f $config_file ]]; then
+        echo "Configuration file does not exist. Creating a new one..."
+    fi
+
+    cp -n "$config_file" "${config_file}.bak" 2>/dev/null || true
+
+    cat > "$config_file" <<EOL
+DEVICE=$interface
+BOOTPROTO=none
+ONBOOT=yes
+IPADDR=${new_ip%/*}
+PREFIX=${new_ip#*/}
+GATEWAY=$new_gateway
+EOL
+
+    echo "Restarting network service..."
+    if systemctl restart NetworkManager; then
+        echo "Network service restarted successfully. New IP address and gateway set."
+    else
+        mv "${config_file}.bak" "$config_file" 2>/dev/null || true
+        echo "Failed to restart network service. Configuration restored."
+    fi
+}
+
+# Function to Set Hostname
+set_hostname() {
+    echo "Hostname Configuration"
+
+    current_hostname=$(hostname)
+    echo "Current hostname: $current_hostname"
+
+    read -p "Would you like to change the hostname? (yes/no): " change_hostname
+    if [[ $change_hostname == "yes" ]]; then
+        read -p "Enter the new hostname: " new_hostname
+        if [[ -n $new_hostname ]]; then
+            hostnamectl set-hostname "$new_hostname"
+            echo "Hostname successfully changed to: $new_hostname"
+        else
+            echo "Hostname cannot be empty."
+        fi
+    else
+        echo "Hostname not changed."
+    fi
+}
+
+# Function to Configure Timezone
+set_timezone() {
+    echo "Timezone Configuration"
+
+    current_timezone=$(timedatectl | grep "Time zone" | awk '{print $3}')
+    echo "Current timezone: $current_timezone"
+
+    read -p "Would you like to change the timezone to New York (America/New_York)? (yes/no): " change_timezone
+    if [[ $change_timezone == "yes" ]]; then
+        timedatectl set-timezone America/New_York
+        echo "Timezone successfully changed to: America/New_York"
+    else
+        echo "Timezone not changed."
+    fi
+}
+
+# Function to Securely Copy Files to a Server
+secure_copy() {
+    echo "Secure Copy Files to a Server"
+
+    read -p "Please enter the username: " username
+    read -p "Please enter the IP addresses (comma-separated): " ip_addresses
+    read -p "Please enter the path for the file on the remote directory: " remote_directory
+    read -p "Please enter the file path of the files (comma-separated): " local_files
+
+    # Convert the comma-separated input into arrays
+    IFS=',' read -ra ADDR <<< "$ip_addresses"
+    IFS=',' read -ra FILES <<< "$local_files"
+
+    for ip_address in "${ADDR[@]}"; do
+        for local_file in "${FILES[@]}"; do
+            local_file=$(echo "$local_file" | xargs)
+            filename=$(basename "$local_file")
+            echo "Copying $local_file to $username@$ip_address:$remote_directory..."
+            scp -r "$local_file" "$username@$ip_address:$remote_directory"
+            echo "Listing the transferred file on server $ip_address:"
+            ssh "$username@$ip_address" "ls -lh $remote_directory/$filename"
+        done
+    done
+}
+
+# Function to Set Up Passwordless SSH
+setup_ssh_key() {
+    echo "Setting up Passwordless SSH"
+
+    # Check if SSH keys exist
+    if [[ ! -f ~/.ssh/id_rsa.pub ]]; then
+        echo "SSH keys do not exist."
+        read -p "Would you like to generate SSH keys? (y/n): " answer
+        if [[ $answer == "y" ]]; then
+            ssh-keygen -t rsa -b 2048
+        else
+            echo "Exiting without generating SSH keys."
+            return
+        fi
+    fi
+
+    read -p "Enter the username to copy keys to: " username
+    read -p "Enter the server IP or name to copy SSH keys: " server
+
+    ssh-copy-id -i ~/.ssh/id_rsa.pub "$username@$server"
+    echo "Passwordless SSH has been set up for $server."
+}
 # Function for DNF Configuration
 configure_dnf() {
     DNF_CONF="/etc/dnf/dnf.conf"
@@ -51,7 +189,6 @@ configure_dnf() {
 
     echo "DNF configuration completed."
 }
-
 # Main menu
 while true; do
     echo "Server Setup Scripts Menu"
@@ -61,7 +198,7 @@ while true; do
     echo "4. Configure Timezone"
     echo "5. Secure Copy Files to a Server"
     echo "6. Set Up Passwordless SSH"
-    echo "7. Configure DNF"
+    echo "7. Setup Dnf configuration"
     echo "8. Exit"
     read -p "Choose an option: " choice
 
@@ -77,4 +214,3 @@ while true; do
         *) echo "Invalid choice. Please try again." ;;
     esac
 done
-
