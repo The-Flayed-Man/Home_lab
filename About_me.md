@@ -3,8 +3,11 @@ About me
 Name: Jimmie Copeland
 
 Age: 38
+
 Job:
+
 Skills:
+
 Favorite distro:
 
 As a System Specialist at MIAX Exchange Group, I manage and maintain the Linux-based infrastructure of a leading options exchange in the US. With over 2 1/2 years of professional experience in this role, I bring expertise in system operations and Red Hat Linux administration, along with hands-on experience in automation, monitoring, and optimization. Overall, I have 8 years of Linux experience, with 5 years in a professional capacity, and 3 years of DevOps experience.
