@@ -1,0 +1,22 @@
+version: '3.8'
+
+services:
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090" # Expose Prometheus on port 9090
+    volumes:
+      - prometheus_data:/prometheus # Persist Prometheus data
+      - ./prometheus-config/prometheus.yml:/etc/prometheus/prometheus.yml
+    deploy:
+      replicas: 2 # Number of Prometheus instances
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: "2048M"
+      restart_policy:
+        condition: on-failure
+
+volumes:
+  prometheus_data:
+    driver: local

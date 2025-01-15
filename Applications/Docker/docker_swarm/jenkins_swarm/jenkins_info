@@ -1,0 +1,62 @@
+#1.Prerequisites
+1. A running Docker Swarm cluster.
+2. docker and docker-compose installed on your system.
+3. A manager node in the swarm.
+4. Ports 8080 (for Jenkins) and 50000 (for agent communication) open in your firewall.
+
+#2. Create a Docker Swarm Service for Jenkins
+1. docker network create --driver overlay jenkins-tst-net
+2. Create deployment file
+3. docker stack deploy -c docker-compose.yml jenkins
+4. docker service ls
+
+3. Access Jenkins
+1. Open your browser and navigate to http://<Swarm_Manager_IP>:8080
+2. docker logs $(docker ps -q -f name=jenkins_jenkins)
+3. Look for a line like
+#*************************************************************
+#*************************************************************
+Jenkins initial setup is required. An admin user has been created and a password generated.
+Please use the following password to proceed to installation:
+
+<YOUR_INITIAL_ADMIN_PASSWORD>
+
+#*************************************************************
+#*************************************************************
+
+**************************************
+Example Jenkins deployment file:
+
+version: '3.8'
+
+services:
+  jenkins:
+    image: jenkins/jenkins
+    deploy:
+      replicas: 2
+      restart_policy:
+        condition: on-failure
+      placement:
+        constraints:
+          - node.role == manager
+    ports:
+      - "8080:8080"
+      - "50000:50000"
+    networks:
+      - jenkins-tst-net
+    volumes:
+      - jenkins_data:/var/jenkins_home
+
+volumes:
+  jenkins_data:
+
+networks:
+  jenkins-tst-net:
+    external: true
+
+This file:
+Deploys Jenkins in a Docker Swarm service.
+Binds Jenkins' web interface to port 8080 and agent communication to port 50000.
+Uses a persistent volume jenkins_data to store Jenkins data.    
+**************************************
+
